@@ -12,10 +12,11 @@ import (
 	"time"
 )
 
+//UploadHandler 上传文件
 func UploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
-	case "GET":
+	case http.MethodGet:
 		//返回html页面
 		data, err := ioutil.ReadFile("./static/view/index.html")
 		if err != nil {
@@ -23,7 +24,7 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		io.WriteString(w, string(data))
-	case "POST":
+	case http.MethodPost:
 		//接收文件流并存储到本地
 		file, head, err := r.FormFile("file")
 		if err != nil {
@@ -53,25 +54,26 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 
 		newFile.Seek(0, 0)
 		fileMeta.FileSha1 = util.FileSha1(newFile)
-		meta.UpdateFileMeta(fileMeta)
+		meta.SaveFileMetaToDB(fileMeta)
 
 		http.Redirect(w, r, "/file/upload/suc", http.StatusFound)
 
 	}
 }
 
+// UploadSucHandler 上传完成
 func UploadSucHandler(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "Upload finished!")
 }
 
-// GetFileMetaHandler: 获取文件原信息
+// GetFileMetaHandler 获取文件元信息
 func GetFileMetaHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	fileHash := r.Form["filehash"][0]
-	fMeta := meta.GetFileMeta(fileHash)
+	fMeta := meta.GetFileMetaFromDB(fileHash)
 
-	if fMeta.FileSha1 == fileHash {
-		data, err := json.Marshal(fMeta)
+	if fMeta != nil && fMeta.FileSha1 == fileHash {
+		data, err := json.Marshal(&fMeta)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -81,12 +83,13 @@ func GetFileMetaHandler(w http.ResponseWriter, r *http.Request) {
 
 }
 
+// DownloadHandler 下载文件
 func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	fsha1 := r.Form.Get("filehash")
-	fm := meta.GetFileMeta(fsha1)
+	fMeta := meta.GetFileMetaFromDB(fsha1)
 
-	f, err := os.Open(fm.Location)
+	f, err := os.Open(fMeta.Location)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -100,10 +103,11 @@ func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/octect-stream")
-	w.Header().Set("content-disposition", "attachment;filename=\""+fm.FileName+"\"")
+	w.Header().Set("content-disposition", "attachment;filename=\""+fMeta.FileName+"\"")
 	w.Write(data)
 }
 
+// FileMetaUpdateHandler 更新文件名称（只更新显示名称，不修改磁盘上的原文件）
 func FileMetaUpdateHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	opType := r.Form.Get("op")
@@ -114,14 +118,14 @@ func FileMetaUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	if r.Method != "POST" {
+	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	curFileMeta := meta.GetFileMeta(fileSha1)
+	curFileMeta := meta.GetFileMetaFromDB(fileSha1)
 	curFileMeta.FileName = newFileName
-	meta.UpdateFileMeta(curFileMeta)
+	meta.UpdateFileMetaToDB(curFileMeta)
 
 	data, err := json.Marshal(curFileMeta)
 	if err != nil {
@@ -132,13 +136,14 @@ func FileMetaUpdateHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+//FileDeleteHandler 删除文件元信息
 func FileDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	fileSha1 := r.Form.Get("filehash")
 
-	fMeta := meta.GetFileMeta(fileSha1)
+	fMeta := meta.GetFileMetaFromDB(fileSha1)
 	os.Remove(fMeta.Location)
-	meta.RemoveFileMeta(fileSha1)
+	meta.RemoveFileMetaFromDB(fileSha1)
 
 	w.WriteHeader(http.StatusOK)
 }
