@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"my-filestore-server/db"
 	"my-filestore-server/meta"
 	"my-filestore-server/util"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -52,13 +54,49 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		//计算hash值
 		newFile.Seek(0, 0)
 		fileMeta.FileSha1 = util.FileSha1(newFile)
 		meta.SaveFileMetaToDB(fileMeta)
 
-		http.Redirect(w, r, "/file/upload/suc", http.StatusFound)
+		//更新用户文件表
+		r.ParseForm()
+		if ok := db.OnUserFileUploadFinished(r.Form.Get("username"), fileMeta.FileSha1, fileMeta.FileName, fileMeta.FileSize); ok {
+			http.Redirect(w, r, "/home", http.StatusFound)
+		} else {
+			w.Write([]byte("Upload Failed."))
+		}
+
+		//http.Redirect(w, r, "/file/upload/suc", http.StatusFound)
 
 	}
+}
+
+//TryFastUploadHandler 尝试秒传
+func TryFastUploadHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	username := r.Form.Get("username")
+	filehash := r.Form.Get("filehash")
+	filename := r.Form.Get("filename")
+	filesize, _ := strconv.Atoi(r.Form.Get("filesize"))
+
+	fileMeta, err := db.GetFileMeta(filehash)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if fileMeta == nil {
+		w.Write(util.NewRespMsg(-1, "秒传失败，请访问普通上传接口", nil).JSONBytes())
+		return
+	}
+
+	if ok := db.OnUserFileUploadFinished(username, filehash, filename, int64(filesize)); ok {
+		w.Write(util.NewRespMsg(0, "秒传成功", nil).JSONBytes())
+	} else {
+		w.Write(util.NewRespMsg(-2, "秒传失败，请稍后重试", nil).JSONBytes())
+	}
+
 }
 
 // UploadSucHandler 上传完成
@@ -80,7 +118,25 @@ func GetFileMetaHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Write(data)
 	}
+}
 
+//FileQueryHandler 批量获取用户文件信息
+func FileQueryHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	username := r.Form.Get("username")
+	limit, _ := strconv.Atoi(r.Form.Get("limit"))
+	userFiles, err := db.QueryUserFileMetas(username, limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	data, err := json.Marshal(userFiles)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Write(data)
 }
 
 // DownloadHandler 下载文件
