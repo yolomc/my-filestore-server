@@ -2,70 +2,84 @@ package handler
 
 import (
 	"fmt"
-	"io/ioutil"
 	"my-filestore-server/config"
 	"my-filestore-server/db"
 	"my-filestore-server/redis"
 	"my-filestore-server/util"
 	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
-//SignupHandler 处理用户注册请求
-func SignupHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		data, err := ioutil.ReadFile("./static/view/signup.html")
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Write(data)
-		return
-	}
+//SignupHandler 用户注册页面Get请求
+func SignupHandler(c *gin.Context) {
+	c.Redirect(http.StatusFound, "/static/view/signup.html")
+}
 
-	r.ParseForm()
-	username := r.Form.Get("username")
-	password := r.Form.Get("password")
+//DoSignupHandler 处理注册post请求
+func DoSignupHandler(c *gin.Context) {
+
+	username := c.Request.FormValue("username")
+	password := c.Request.FormValue("password")
 	if len(username) < 3 || len(password) < 5 {
-		w.Write([]byte("Invalid parameter"))
+		c.JSON(http.StatusOK, gin.H{
+			"msg":  "请求参数无效",
+			"code": util.StatusRegisterFailed,
+		})
 		return
 	}
 
 	encodePwd := util.Sha1([]byte(password + config.PWD_SALT))
 	ok := db.UserSignup(username, encodePwd)
 	if !ok {
-		w.Write([]byte("FAILED"))
+		c.JSON(http.StatusOK, gin.H{
+			"msg":  "注册失败",
+			"code": util.StatusRegisterFailed,
+		})
 	}
-	w.Write([]byte("SUCCESS"))
+	c.JSON(http.StatusOK, gin.H{
+		"msg":  "注册成功",
+		"code": util.StatusOK,
+	})
 }
 
-//SigninHandler 用户登录
-func SigninHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		data, err := ioutil.ReadFile("./static/view/signin.html")
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Write(data)
+//SigninHandler 用户登录页面get请求
+func SigninHandler(c *gin.Context) {
+	c.Redirect(http.StatusFound, "/static/view/signin.html")
+}
+
+//DoSigninHandler 处理登录post请求
+func DoSigninHandler(c *gin.Context) {
+	//获取用户名和密码
+	username := c.Request.FormValue("username")
+	password := c.Request.FormValue("password")
+	if len(username) < 3 || len(password) < 5 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"msg":  "请求参数无效",
+			"code": util.StatusLoginFailed,
+		})
 		return
 	}
 
-	//验证用户名和密码
-	r.ParseForm()
-	username := r.Form.Get("username")
-	password := r.Form.Get("password")
+	//检查是否存在于数据库
 	encodePwd := util.Sha1([]byte(password + config.PWD_SALT))
 	userCheck := db.UserSignin(username, encodePwd)
 	if !userCheck {
-		w.Write([]byte("FAILED"))
+		c.JSON(http.StatusBadRequest, gin.H{
+			"msg":  "用户名或密码错误",
+			"code": util.StatusLoginFailed,
+		})
 		return
 	}
 
 	//生成访问凭证（token），并保如redis
-	token := GenToken(username)
+	token := genToken(username)
 	if err := redis.Set("token_"+username, token, config.TOKEN_TTL); err != nil {
-		w.Write([]byte("FAILED"))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"msg":  "生成Token错误",
+			"code": util.StatusLoginFailed,
+		})
 		return
 	}
 
@@ -78,44 +92,35 @@ func SigninHandler(w http.ResponseWriter, r *http.Request) {
 			Username string
 			Token    string
 		}{
-			Location: "http://" + r.Host + "/home",
+			Location: "/static/view/home.html",
 			Username: username,
 			Token:    token,
 		},
 	}
-	w.Write(resp.JSONBytes())
+	c.Data(http.StatusOK, "application/json", resp.JSONBytes())
 }
 
 //UserInfoHandler 用户信息
-func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	username := r.Form.Get("username")
+func UserInfoHandler(c *gin.Context) {
 
-	//验证token
-	//token := r.Form.Get("token")
-	// if !IsTokenValid(username, token) {
-	// 	w.WriteHeader(http.StatusForbidden)
-	// 	return
-	// }
-
+	username := c.Request.FormValue("username")
 	//查询用户信息
 	user, err := db.GetUserInfo(username)
 	if err != nil {
-		w.WriteHeader(http.StatusForbidden)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"msg":  "查询用户信息失败",
+			"code": util.StatusServerError,
+		})
 		return
 	}
 
 	//返回用户数据
-	resp := util.RespMsg{
-		Code: 0,
-		Msg:  "OK",
-		Data: user,
-	}
-	w.Write(resp.JSONBytes())
+	resp := util.NewRespMsg(util.StatusOK, "OK", user)
+	c.Data(http.StatusOK, "application/json", resp.JSONBytes())
 }
 
-//GenToken 生成token (40位字符：md5+时间戳前8位)
-func GenToken(username string) string {
+//genToken 生成token (40位字符：md5+时间戳前8位)
+func genToken(username string) string {
 	ts := fmt.Sprintf("%x", time.Now().Unix())
 	return util.MD5([]byte(username+ts+config.TOKEN_SALT)) + ts[:8]
 }

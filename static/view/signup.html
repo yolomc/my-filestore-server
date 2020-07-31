@@ -26,7 +26,7 @@
         <tbody>
           <tr style="margin-bottom: 20px;">
             <td>
-              <span class="p">*</span>
+              <span class="p">&nbsp;</span>
               <label for="username" class="l"> 新用户名:</label>
             </td>
             <td>
@@ -39,11 +39,11 @@
           </tr>
           <tr style="margin-bottom: 20px;">
             <td>
-              <span class="p">*</span>
+              <span class="p">&nbsp;</span>
               <label for="password" class="l"> 密码:</label>
             </td>
             <td>
-              <input id="password" type="text" style="height:30px;width:250px;padding-right:50px;">
+              <input id="password" type="password" style="height:30px;width:250px;padding-right:50px;">
             </td>
           </tr>
           <tr>
@@ -52,11 +52,11 @@
           </tr>
           <tr style="margin-bottom: 20px;">
             <td>
-              <span class="p">*</span>
+              <span class="p">&nbsp;</span>
               <label for="passwordc" class="l"> 确认密码:</label>
             </td>
             <td>
-              <input id="passwordc" type="text" style="height:30px;width:250px;padding-right:50px;">
+              <input id="passwordc" type="password" style="height:30px;width:250px;padding-right:50px;">
             </td>
           </tr>
           <tr>
@@ -88,21 +88,16 @@
         "username": username.value,
         "password": password.value
       },
-      error: function (jqXHR, textStatus, errorThrown) {
-        if (textStatus == "error") {
-          alert(textStatus + " : " + errorThrown);
-        } else {
+      error: function (err) {
           alert(textStatus);
-        }
       },
-      success: function (data, textStatus, jqXHR) {
-        if (data == 'SUCCESS') {
+      success: function (body) {
+        if (body.code == 0) {
           // 成功后跳到登录页
           document.getElementById("login_hint").style.display = "block";
           setTimeout(() => {
             window.location.href = '/static/view/signin.html';
           }, 2000);
-
         } else {
           alert('注册失败');
         }
@@ -110,5 +105,4 @@
     });
   }
 </script>
-
 </html>

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 //MultipartUploadInfo 分块上传结构
@@ -25,13 +27,14 @@ type MultipartUploadInfo struct {
 }
 
 //InitialMultipartUploadHandler 初始化分块上传
-func InitialMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	username := r.Form.Get("username")
-	filehash := r.Form.Get("filehash")
-	filesize, err := strconv.Atoi(r.Form.Get("filesize"))
+func InitialMultipartUploadHandler(c *gin.Context) {
+
+	username := c.Request.FormValue("username")
+	filehash := c.Request.FormValue("filehash")
+	filesize, err := strconv.Atoi(c.Request.FormValue("filesize"))
 	if err != nil {
-		w.Write(util.NewRespMsg(-1, "params invalid", nil).JSONBytes())
+		c.Data(http.StatusInternalServerError, "Application/json",
+			util.NewRespMsg(util.StatusServerError, "参数不正确", nil).JSONBytes())
 		return
 	}
 
@@ -52,30 +55,34 @@ func InitialMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	//将初始化数据返回到客户端
-	w.Write(util.NewRespMsg(0, "OK", upInfo).JSONBytes())
+	c.Data(http.StatusOK, "application/json",
+		util.NewRespMsg(util.StatusOK, "分块信息初始化成功", nil).JSONBytes())
 }
 
 // UploadPartHandler 上传文件分块
-func UploadPartHandler(w http.ResponseWriter, r *http.Request) {
+func UploadPartHandler(c *gin.Context) {
 
-	r.ParseForm()
-	uploadID := r.Form.Get("uploadid")
-	chunkIndex := r.Form.Get("index")
+	uploadID := c.Request.FormValue("uploadid")
+	chunkIndex := c.Request.FormValue("index")
 
-	//获得文件句柄，用于存储分块内容
+	//保存分块
 	fpath := "/home/yolo/upload/" + uploadID + "/" + chunkIndex
 	os.MkdirAll(path.Dir(fpath), 0744) //创建目录
-	fd, err := os.Create(fpath)        //创建文件
+	file, err := os.Create(fpath)      //创建文件
 	if err != nil {
-		w.Write(util.NewRespMsg(-1, "Upload part failed", nil).JSONBytes())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"msg":  "创建文件失败",
+			"code": util.StatusCreateFileError,
+		})
 		return
 	}
-	defer fd.Close()
+	defer file.Close()
 
+	//将Form的data 写入到file
 	buf := make([]byte, 1024*1024)
 	for {
-		n, err := r.Body.Read(buf)
-		fd.Write(buf[:n])
+		n, err := c.Request.Body.Read(buf)
+		file.Write(buf[:n])
 		if err != nil {
 			break
 		}
@@ -85,22 +92,24 @@ func UploadPartHandler(w http.ResponseWriter, r *http.Request) {
 	redis.HSet("MP_"+uploadID, "chkidx_"+chunkIndex, 1)
 
 	// 返回处理结果到客户端
-	w.Write(util.NewRespMsg(0, "OK", nil).JSONBytes())
+	c.Data(http.StatusOK, "application/json",
+		util.NewRespMsg(util.StatusOK, "分块信息"+chunkIndex+"上传成功", nil).JSONBytes())
 }
 
 //CompleteUploadHandler 通知上传合并
-func CompleteUploadHandler(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	uploadid := r.Form.Get("uploadid")
-	username := r.Form.Get("username")
-	filehash := r.Form.Get("filehash")
-	filename := r.Form.Get("filename")
-	filesize, _ := strconv.Atoi(r.Form.Get("filesize"))
+func CompleteUploadHandler(c *gin.Context) {
 
-	//通过uplaodid查询redis，判断分块上传是否完成
+	uploadid := c.Request.FormValue("uploadid")
+	username := c.Request.FormValue("username")
+	filename := c.Request.FormValue("filename")
+	filehash := c.Request.FormValue("filehash")
+	filesize, _ := strconv.Atoi(c.Request.FormValue("filesize"))
+
+	//通过uplaodid查询redis，并判断分块上传是否完成
 	data, err := redis.HGetAll("MP_" + uploadid)
 	if err != nil {
-		w.Write(util.NewRespMsg(-1, "Complete Upload Failed", nil).JSONBytes())
+		c.Data(http.StatusInternalServerError, "application/json",
+			util.NewRespMsg(util.StatusRedisGetError, "redis获取数据失败", nil).JSONBytes())
 		return
 	}
 	totalCount := 0
@@ -116,7 +125,8 @@ func CompleteUploadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if totalCount != chunkCount {
-		w.Write(util.NewRespMsg(-2, "invalid request", nil).JSONBytes())
+		c.Data(http.StatusBadRequest, "application/json",
+			util.NewRespMsg(util.StatusPartNotFull, "分块未全部上传", nil).JSONBytes())
 		return
 	}
 
@@ -124,7 +134,8 @@ func CompleteUploadHandler(w http.ResponseWriter, r *http.Request) {
 	partFileStorePath := "/home/yolo/upload/" + uploadid + "/" // 分块所在的目录
 	fileStorePath := "/home/yolo/upload/" + filename           // 最后文件保存的路径
 	if _, err := mergeAllPartFile(chunkCount, partFileStorePath, fileStorePath); err != nil {
-		w.Write(util.NewRespMsg(-2, "分块归并失败", nil).JSONBytes())
+		c.Data(http.StatusInternalServerError, "application/json",
+			util.NewRespMsg(util.StatusMergeError, "分块归并失败", nil).JSONBytes())
 		return
 	}
 	//删除redis缓存数据
@@ -134,15 +145,18 @@ func CompleteUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	//更新唯一文件表和用户文件表
 	if ok := db.OnFileUploadFinished(filehash, filename, int64(filesize), ""); !ok {
-		w.Write(util.NewRespMsg(-2, "数据处理失败", nil).JSONBytes())
+		c.Data(http.StatusInternalServerError, "application/json",
+			util.NewRespMsg(util.StatusServerError, "数据写入失败", nil).JSONBytes())
 		return
 	}
 	if ok := db.OnUserFileUploadFinished(username, filehash, filename, int64(filesize)); !ok {
-		w.Write(util.NewRespMsg(-2, "数据处理失败", nil).JSONBytes())
+		c.Data(http.StatusInternalServerError, "application/json",
+			util.NewRespMsg(util.StatusServerError, "数据写入失败", nil).JSONBytes())
 		return
 	}
 
-	w.Write(util.NewRespMsg(0, "OK", nil).JSONBytes())
+	c.Data(http.StatusOK, "application/json",
+		util.NewRespMsg(util.StatusOK, "分块处理完毕", nil).JSONBytes())
 }
 
 //mergeAllPartFile 将分块文件合并成原文件，成功后删除分块文件

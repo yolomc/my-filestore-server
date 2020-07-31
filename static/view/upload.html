@@ -57,14 +57,14 @@
 
   function onUpload() {
     var upUrl = "/file/upload?" + queryParams();
-    // var upEntry = localStorage.getItem("uploadEntry");
-    // if (upEntry != "" ) {
-    //   if (upEntry.indexOf("http:")>=0) {
-    //     upUrl = upEntry + "/file/upload?" + queryParams();
-    //   } else {
-    //     upUrl = "http://" + upEntry + "/file/upload?" + queryParams();
-    //   }
-    // }
+    var upEntry = localStorage.getItem("uploadEntry");
+    if (upEntry != "" ) {
+      if (upEntry.indexOf("http:")>=0) {
+        upUrl = upEntry + "/file/upload?" + queryParams();
+      } else {
+        upUrl = "http://" + upEntry + "/file/upload?" + queryParams();
+      }
+    }
     $.ajax({
       url: upUrl,
       type: 'POST',
@@ -75,12 +75,9 @@
       error: function (err) {
         alert('请求报错信息: ' + JSON.stringify(err));
       },
-      success: function (data) {
-        // alert('请求返回结果: ' + JSON.stringify(res));
-        // console.log(res.code)
-        // var data = JSON.parse(res)
-        // alert(data.code)
-        if (data.code == 0) {
+      success: function (res) {
+        alert('请求返回结果: ' + JSON.stringify(res));
+        if (res.code == 0) {
           window.location.href = "/static/view/home.html";
         }
       }

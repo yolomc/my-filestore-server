@@ -1,0 +1,17 @@
+syntax="proto3";
+
+package proto;
+
+service FileService{
+    rpc FileQuery (ReqFileQuery) returns (RespFileQuery);
+}
+
+message ReqFileQuery{
+    string username=1;
+    int32 limit=2;
+}
+message RespFileQuery{
+    int32 code=1;
+    string message=2;
+    bytes Data=3;
+}
